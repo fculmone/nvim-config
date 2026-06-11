@@ -485,13 +485,28 @@ do
   require('telescope').setup {
     -- You can put your default mappings / updates / etc. in here
     --  All the info you're looking for is in `:help telescope.setup()`
-    --
-    -- defaults = {
-    --   mappings = {
-    --     i = { ['<c-enter>'] = 'to_fuzzy_refine' },
-    --   },
-    -- },
-    -- pickers = {}
+    defaults = {
+      -- Follow symlinks in live_grep / grep_string. This lets a plain
+      -- the dev-managed repo at ~/src/github.com/shopify-playground/mobile-native.
+      -- Each repo's nested .gitignore is still respected, so build artifacts
+      -- (.build/, build/) stay out of results.
+      vimgrep_arguments = {
+        'rg',
+        '--color=never',
+        '--no-heading',
+        '--with-filename',
+        '--line-number',
+        '--column',
+        '--smart-case',
+        '--follow',
+      },
+    },
+    pickers = {
+      -- Same idea for the file picker: follow symlinks so find_files spans
+      -- every repo symlinked into the workspace. (follow=true appends -L,
+      -- which both fd and rg accept, and preserves finder auto-detection.)
+      find_files = { follow = true },
+    },
     extensions = {
       ['ui-select'] = { require('telescope.themes').get_dropdown() },
     },
