@@ -984,6 +984,9 @@ do
   --
   --  Uncomment the following line and add your plugins to `lua/custom/plugins/*.lua` to get going.
   -- require 'custom.plugins'
+  vim.pack.add({ "https://github.com/sphamba/smear-cursor.nvim", })
+  require('smear_cursor').setup({ })
+
 end
 
 -- The line beneath this is called `modeline`. See `:help modeline`
