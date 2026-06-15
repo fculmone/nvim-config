@@ -208,8 +208,28 @@ do
   -- Double-Esc exits terminal mode.
   vim.keymap.set('t', '<Esc><Esc>', '<C-\\><C-n>', { desc = 'Exit terminal mode' })
 
+  local function resolve_executable(name)
+    if vim.fn.executable(name) == 1 then return name end
+
+    for _, path in ipairs {
+      vim.fs.joinpath('/opt/homebrew/bin', name),
+      vim.fs.joinpath('/usr/local/bin', name),
+      vim.fn.expand(vim.fs.joinpath('~/.local/bin', name)),
+      vim.fn.expand(vim.fs.joinpath('~/.local/state/tec/profiles/base/current/global/bin', name)),
+    } do
+      if vim.fn.executable(path) == 1 then return path end
+    end
+  end
+
   local function open_float_terminal(command, dir, opts)
     opts = opts or {}
+
+    local executable = resolve_executable(command[1])
+    if not executable then
+      vim.notify(('Could not find `%s` on PATH. Install it or add it to PATH, then restart Neovim.'):format(command[1]), vim.log.levels.ERROR)
+      return
+    end
+
     local prev_win = vim.api.nvim_get_current_win()
 
     local width = math.floor(vim.o.columns * (opts.width or 0.8))
@@ -229,55 +249,60 @@ do
       col = col,
     })
 
-    local term_cmd = opts.args and vim.list_extend(vim.deepcopy(command), opts.args) or command
+    local term_cmd = vim.deepcopy(command)
+    term_cmd[1] = executable
+    if opts.args then vim.list_extend(term_cmd, opts.args) end
 
-    local ok, err = pcall(vim.fn.termopen, term_cmd, {
+    local ok, job_or_err = pcall(vim.fn.termopen, term_cmd, {
       cwd = dir,
-      on_exit = function()
+      on_exit = function(_, code, event)
         vim.schedule(function()
-          if vim.api.nvim_win_is_valid(win) then
-            vim.api.nvim_win_close(win, true)
-          end
-          if vim.api.nvim_win_is_valid(prev_win) then
-            vim.api.nvim_set_current_win(prev_win)
+          if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
+          if vim.api.nvim_win_is_valid(prev_win) then vim.api.nvim_set_current_win(prev_win) end
+          if opts.on_exit then
+            local callback_ok, callback_err = pcall(opts.on_exit, code, event)
+            if not callback_ok then vim.notify(('Terminal exit hook failed: %s'):format(callback_err), vim.log.levels.ERROR) end
           end
         end)
       end,
     })
 
-    if not ok then
-      vim.api.nvim_win_close(win, true)
-      vim.notify(('Failed to launch %s: %s'):format(opts.label or command[1] or 'terminal', tostring(err)), vim.log.levels.ERROR)
+    if not ok or job_or_err <= 0 then
+      if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
+      vim.notify(('Failed to launch %s: %s'):format(opts.label or command[1] or 'terminal', tostring(job_or_err)), vim.log.levels.ERROR)
       return
     end
 
     vim.cmd.startinsert()
   end
 
-  -- Open Yazi in a floating terminal, starting from the current file's
-  -- directory or the current working directory if the buffer has no path.
-  local function open_yazi()
+  local function buffer_path_or_cwd()
     local source = vim.api.nvim_buf_get_name(0)
-    local dir = source ~= '' and vim.fs.dirname(source) or vim.fn.getcwd()
-    open_float_terminal({ 'yazi', dir }, dir, { label = 'yazi' })
+    if source ~= '' then return source, vim.fs.dirname(source) or vim.fn.getcwd() end
+    local cwd = vim.fn.getcwd()
+    return cwd, cwd
   end
-
-  vim.api.nvim_create_user_command('Yazi', open_yazi, {})
-  vim.keymap.set('n', '<leader>e', open_yazi, { desc = '[E]xplorer' })
-  vim.keymap.set('n', '-', open_yazi, { desc = 'Open parent directory in Yazi' })
 
   -- Open LazyGit in a floating terminal, starting from the git root when
   -- available or the current working directory otherwise.
-  local function open_lazygit()
-    local source = vim.api.nvim_buf_get_name(0)
-    local dir = source ~= '' and vim.fs.dirname(source) or vim.fn.getcwd()
-    local git_root = vim.fn.systemlist({ 'git', '-C', dir, 'rev-parse', '--show-toplevel' })
+  local function open_lazygit(command_opts)
+    command_opts = type(command_opts) == 'table' and command_opts or {}
+
+    local _, dir = buffer_path_or_cwd()
+    local git_root = vim.fn.systemlist { 'git', '-C', dir, 'rev-parse', '--show-toplevel' }
     if vim.v.shell_error == 0 and git_root[1] and git_root[1] ~= '' then dir = git_root[1] end
-    open_float_terminal({ 'lazygit' }, dir, { width = 0.9, height = 0.9, label = 'lazygit' })
+
+    open_float_terminal({ 'lazygit' }, dir, {
+      args = command_opts.fargs,
+      width = 0.9,
+      height = 0.9,
+      label = 'lazygit',
+      on_exit = function() vim.cmd.checktime() end,
+    })
   end
 
-  vim.api.nvim_create_user_command('LazyGit', open_lazygit, {})
-  vim.keymap.set('n', '<leader>gg', open_lazygit, { desc = '[G]it [G]it' })
+  vim.api.nvim_create_user_command('LazyGit', open_lazygit, { nargs = '*' })
+  vim.keymap.set('n', '<leader>gg', open_lazygit, { desc = '[G]it UI (LazyGit)' })
 
   -- TIP: Disable arrow keys in normal mode
   -- vim.keymap.set('n', '<left>', '<cmd>echo "Use h to move!!"<CR>')
@@ -449,10 +474,10 @@ do
   -- change the command under that to load whatever the name of that colorscheme is.
   --
   -- If you want to see what colorschemes are already installed, you can use `:Telescope colorscheme`.
-  vim.pack.add { { src = "https://github.com/catppuccin/nvim", name = "catppuccin" } }
+  vim.pack.add { { src = 'https://github.com/catppuccin/nvim', name = 'catppuccin' } }
   ---@diagnostic disable-next-line: missing-fields
   require('catppuccin').setup {
-    flavour = "macchiato",
+    flavour = 'macchiato',
   }
 
   -- Load the colorscheme here.
@@ -581,6 +606,22 @@ do
   -- Enable Telescope extensions if they are installed
   pcall(require('telescope').load_extension, 'fzf')
   pcall(require('telescope').load_extension, 'ui-select')
+
+  -- [[ Yazi file explorer ]]
+  -- Open Yazi in a floating window with Neovim-aware file actions.
+  vim.pack.add { gh 'mikavilpas/yazi.nvim' }
+  require('yazi').setup {
+    open_for_directories = false,
+    keymaps = {
+      show_help = '<f1>',
+      -- Disable only the macOS grealpath-dependent keymap. Install
+      -- coreutils and remove this if you want <c-y> relative-path copying.
+      copy_relative_path_to_selected_files = false,
+    },
+  }
+  vim.keymap.set({ 'n', 'v' }, '<leader>e', '<cmd>Yazi<CR>', { desc = '[E]xplorer (Yazi)' })
+  vim.keymap.set({ 'n', 'v' }, '-', '<cmd>Yazi<CR>', { desc = 'Open current file directory in Yazi' })
+  vim.keymap.set('n', '<leader>E', '<cmd>Yazi cwd<CR>', { desc = '[E]xplorer cwd (Yazi)' })
 
   -- See `:help telescope.builtin`
   local builtin = require 'telescope.builtin'
@@ -1050,9 +1091,8 @@ do
   --
   --  Uncomment the following line and add your plugins to `lua/custom/plugins/*.lua` to get going.
   -- require 'custom.plugins'
-  vim.pack.add({ "https://github.com/sphamba/smear-cursor.nvim", })
-  require('smear_cursor').setup({ })
-
+  vim.pack.add { 'https://github.com/sphamba/smear-cursor.nvim' }
+  require('smear_cursor').setup {}
 end
 
 -- The line beneath this is called `modeline`. See `:help modeline`
