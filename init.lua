@@ -205,13 +205,79 @@ do
 
   vim.keymap.set('n', '<leader>q', vim.diagnostic.setloclist, { desc = 'Open diagnostic [Q]uickfix list' })
 
-  -- Exit terminal mode in the builtin terminal with a shortcut that is a bit easier
-  -- for people to discover. Otherwise, you normally need to press <C-\><C-n>, which
-  -- is not what someone will guess without a bit more experience.
-  --
-  -- NOTE: This won't work in all terminal emulators/tmux/etc. Try your own mapping
-  -- or just use <C-\><C-n> to exit terminal mode
+  -- Double-Esc exits terminal mode.
   vim.keymap.set('t', '<Esc><Esc>', '<C-\\><C-n>', { desc = 'Exit terminal mode' })
+
+  local function open_float_terminal(command, dir, opts)
+    opts = opts or {}
+    local prev_win = vim.api.nvim_get_current_win()
+
+    local width = math.floor(vim.o.columns * (opts.width or 0.8))
+    local height = math.floor(vim.o.lines * (opts.height or 0.8))
+    local row = math.floor((vim.o.lines - height) / 2 - 1)
+    local col = math.floor((vim.o.columns - width) / 2)
+
+    local buf = vim.api.nvim_create_buf(false, true)
+    vim.bo[buf].bufhidden = 'wipe'
+    local win = vim.api.nvim_open_win(buf, true, {
+      relative = 'editor',
+      style = 'minimal',
+      border = 'rounded',
+      width = width,
+      height = height,
+      row = row,
+      col = col,
+    })
+
+    local term_cmd = opts.args and vim.list_extend(vim.deepcopy(command), opts.args) or command
+
+    local ok, err = pcall(vim.fn.termopen, term_cmd, {
+      cwd = dir,
+      on_exit = function()
+        vim.schedule(function()
+          if vim.api.nvim_win_is_valid(win) then
+            vim.api.nvim_win_close(win, true)
+          end
+          if vim.api.nvim_win_is_valid(prev_win) then
+            vim.api.nvim_set_current_win(prev_win)
+          end
+        end)
+      end,
+    })
+
+    if not ok then
+      vim.api.nvim_win_close(win, true)
+      vim.notify(('Failed to launch %s: %s'):format(opts.label or command[1] or 'terminal', tostring(err)), vim.log.levels.ERROR)
+      return
+    end
+
+    vim.cmd.startinsert()
+  end
+
+  -- Open Yazi in a floating terminal, starting from the current file's
+  -- directory or the current working directory if the buffer has no path.
+  local function open_yazi()
+    local source = vim.api.nvim_buf_get_name(0)
+    local dir = source ~= '' and vim.fs.dirname(source) or vim.fn.getcwd()
+    open_float_terminal({ 'yazi', dir }, dir, { label = 'yazi' })
+  end
+
+  vim.api.nvim_create_user_command('Yazi', open_yazi, {})
+  vim.keymap.set('n', '<leader>e', open_yazi, { desc = '[E]xplorer' })
+  vim.keymap.set('n', '-', open_yazi, { desc = 'Open parent directory in Yazi' })
+
+  -- Open LazyGit in a floating terminal, starting from the git root when
+  -- available or the current working directory otherwise.
+  local function open_lazygit()
+    local source = vim.api.nvim_buf_get_name(0)
+    local dir = source ~= '' and vim.fs.dirname(source) or vim.fn.getcwd()
+    local git_root = vim.fn.systemlist({ 'git', '-C', dir, 'rev-parse', '--show-toplevel' })
+    if vim.v.shell_error == 0 and git_root[1] and git_root[1] ~= '' then dir = git_root[1] end
+    open_float_terminal({ 'lazygit' }, dir, { width = 0.9, height = 0.9, label = 'lazygit' })
+  end
+
+  vim.api.nvim_create_user_command('LazyGit', open_lazygit, {})
+  vim.keymap.set('n', '<leader>gg', open_lazygit, { desc = '[G]it [G]it' })
 
   -- TIP: Disable arrow keys in normal mode
   -- vim.keymap.set('n', '<left>', '<cmd>echo "Use h to move!!"<CR>')
