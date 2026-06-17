@@ -463,6 +463,7 @@ do
     spec = {
       { '<leader>s', group = '[S]earch', mode = { 'n', 'v' } },
       { '<leader>t', group = '[T]oggle' },
+      { '<leader>m', group = 'Harpoon [M]arks' },
       { '<leader>h', group = 'Git [H]unk', mode = { 'n', 'v' } }, -- Enable gitsigns recommended keymaps first
       { 'gr', group = 'LSP Actions', mode = { 'n' } },
     },
@@ -606,6 +607,23 @@ do
   -- Enable Telescope extensions if they are installed
   pcall(require('telescope').load_extension, 'fzf')
   pcall(require('telescope').load_extension, 'ui-select')
+
+  -- [[ Harpoon quick file navigation ]]
+  -- Keep the existing <C-h/j/k/l> split navigation. Use Option/Alt plus
+  -- QWERTY left home-row keys (a/s/d/f) for direct Harpoon jumps instead.
+  vim.pack.add { { src = gh 'ThePrimeagen/harpoon', version = 'harpoon2' } }
+  local harpoon = require 'harpoon'
+  harpoon:setup {}
+
+  local function harpoon_list() return harpoon:list() end
+  vim.keymap.set('n', '<leader>ma', function() harpoon_list():add() end, { desc = 'Harpoon [A]dd file' })
+  vim.keymap.set('n', '<leader>mm', function() harpoon.ui:toggle_quick_menu(harpoon_list()) end, { desc = 'Harpoon [M]enu' })
+  vim.keymap.set('n', '<leader>mp', function() harpoon_list():prev() end, { desc = 'Harpoon [P]revious file' })
+  vim.keymap.set('n', '<leader>mn', function() harpoon_list():next() end, { desc = 'Harpoon [N]ext file' })
+  vim.keymap.set('n', '<M-a>', function() harpoon_list():select(1) end, { desc = 'Harpoon file 1' })
+  vim.keymap.set('n', '<M-s>', function() harpoon_list():select(2) end, { desc = 'Harpoon file 2' })
+  vim.keymap.set('n', '<M-d>', function() harpoon_list():select(3) end, { desc = 'Harpoon file 3' })
+  vim.keymap.set('n', '<M-f>', function() harpoon_list():select(4) end, { desc = 'Harpoon file 4' })
 
   -- [[ Yazi file explorer ]]
   -- Open Yazi in a floating window with Neovim-aware file actions.
