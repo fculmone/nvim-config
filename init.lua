@@ -829,11 +829,48 @@ do
     -- pyright = {},
     -- rust_analyzer = {},
     --
-    -- Some languages (like typescript) have entire language plugins that can be useful:
-    --    https://github.com/pmizio/typescript-tools.nvim
-    --
-    -- But for many setups, the LSP (`ts_ls`) will work just fine
-    -- ts_ls = {},
+    -- React Native / TypeScript essentials.
+    -- TypeScript LSP powers TS/TSX navigation, refactors, auto-imports, and inlay hints.
+    ts_ls = {
+      on_init = function(client)
+        -- Let Prettier/conform own JS/TS formatting.
+        client.server_capabilities.documentFormattingProvider = false
+        client.server_capabilities.documentRangeFormattingProvider = false
+      end,
+      settings = {
+        typescript = {
+          inlayHints = {
+            includeInlayEnumMemberValueHints = true,
+            includeInlayFunctionLikeReturnTypeHints = true,
+            includeInlayFunctionParameterTypeHints = true,
+            includeInlayParameterNameHints = 'literals',
+            includeInlayPropertyDeclarationTypeHints = true,
+            includeInlayVariableTypeHints = false,
+          },
+        },
+        javascript = {
+          inlayHints = {
+            includeInlayEnumMemberValueHints = true,
+            includeInlayFunctionLikeReturnTypeHints = true,
+            includeInlayFunctionParameterTypeHints = true,
+            includeInlayParameterNameHints = 'literals',
+            includeInlayPropertyDeclarationTypeHints = true,
+            includeInlayVariableTypeHints = false,
+          },
+        },
+      },
+    },
+    -- ESLint LSP handles diagnostics and code actions; formatting stays with Prettier.
+    eslint = {
+      settings = {
+        format = false,
+        workingDirectory = { mode = 'auto' },
+      },
+    },
+    -- Project/config file LSPs commonly used around React Native apps.
+    jsonls = {},
+    yamlls = {},
+    cssls = {},
 
     stylua = {}, -- Used to format Lua code
 
@@ -879,7 +916,28 @@ do
     gh 'WhoIsSethDaniel/mason-tool-installer.nvim',
   }
 
-  -- Automatically install LSPs and related tools to stdpath for Neovim
+  -- Automatically install LSPs and related tools to stdpath for Neovim.
+  -- Mason's npm-based installers need a real npm binary. Shopify's default
+  -- toolchain npm exits outside project contexts, so prefer an nvm npm when
+  -- one is available and the current npm is unusable.
+  local function ensure_usable_npm_for_mason()
+    if vim.fn.executable 'npm' == 1 then
+      local result = vim.system({ 'npm', '--version' }):wait()
+      if result.code == 0 then return end
+    end
+
+    for _, npm in ipairs(vim.fn.glob('~/.nvm/versions/node/v*/bin/npm', false, true)) do
+      local dir = vim.fs.dirname(npm)
+      local path = dir .. ':' .. vim.env.PATH
+      local result = vim.system({ npm, '--version' }, { env = { PATH = path } }):wait()
+      if result.code == 0 then
+        vim.env.PATH = path
+        return
+      end
+    end
+  end
+
+  ensure_usable_npm_for_mason()
   require('mason').setup {}
 
   -- Ensure the servers and tools above are installed
@@ -891,7 +949,10 @@ do
   -- You can press `g?` for help in this menu.
   local ensure_installed = vim.tbl_keys(servers or {})
   vim.list_extend(ensure_installed, {
-    -- You can add other tools here that you want Mason to install
+    -- JS/TS formatting for React Native projects. Conform tries prettierd first,
+    -- then falls back to prettier.
+    'prettierd',
+    'prettier',
   })
 
   require('mason-tool-installer').setup { ensure_installed = ensure_installed }
@@ -909,31 +970,55 @@ end
 do
   -- [[ Formatting ]]
   vim.pack.add { gh 'stevearc/conform.nvim' }
+
+  local prettier_filetypes = {
+    javascript = true,
+    javascriptreact = true,
+    typescript = true,
+    typescriptreact = true,
+    json = true,
+    jsonc = true,
+    css = true,
+    scss = true,
+    less = true,
+    html = true,
+    yaml = true,
+    markdown = true,
+    ['markdown.mdx'] = true,
+  }
+  local prettier = { 'prettierd', 'prettier', stop_after_first = true }
+
   require('conform').setup {
     notify_on_error = false,
     format_on_save = function(bufnr)
-      -- You can specify filetypes to autoformat on save here:
-      local enabled_filetypes = {
-        -- lua = true,
-        -- python = true,
-      }
-      if enabled_filetypes[vim.bo[bufnr].filetype] then
-        return { timeout_ms = 500 }
-      else
-        return nil
+      if prettier_filetypes[vim.bo[bufnr].filetype] then
+        return {
+          timeout_ms = 1000,
+          -- For JS/TS, avoid silently falling back to ts_ls formatting if Prettier
+          -- is unavailable; Mason installs prettierd/prettier above.
+          lsp_format = 'never',
+        }
       end
+      return nil
     end,
     default_format_opts = {
       lsp_format = 'fallback', -- Use external formatters if configured below, otherwise use LSP formatting. Set to `false` to disable LSP formatting entirely.
     },
     -- You can also specify external formatters in here.
     formatters_by_ft = {
-      -- rust = { 'rustfmt' },
-      -- Conform can also run multiple formatters sequentially
-      -- python = { "isort", "black" },
-      --
-      -- You can use 'stop_after_first' to run the first available formatter from the list
-      -- javascript = { "prettierd", "prettier", stop_after_first = true },
+      javascript = prettier,
+      javascriptreact = prettier,
+      typescript = prettier,
+      typescriptreact = prettier,
+      json = prettier,
+      jsonc = prettier,
+      css = prettier,
+      scss = prettier,
+      less = prettier,
+      html = prettier,
+      yaml = prettier,
+      markdown = prettier,
+      ['markdown.mdx'] = prettier,
     },
   }
 
@@ -1035,8 +1120,27 @@ do
   -- NOTE: You can also specify a branch or a specific commit
   vim.pack.add { { src = gh 'nvim-treesitter/nvim-treesitter', version = 'main' } }
 
-  -- Ensure basic parsers are installed
-  local parsers = { 'bash', 'c', 'diff', 'html', 'lua', 'luadoc', 'markdown', 'markdown_inline', 'query', 'vim', 'vimdoc' }
+  -- Ensure basic parsers are installed, plus JS/TS/TSX for React Native work.
+  local parsers = {
+    'bash',
+    'c',
+    'css',
+    'diff',
+    'html',
+    'javascript',
+    'jsdoc',
+    'json',
+    'lua',
+    'luadoc',
+    'markdown',
+    'markdown_inline',
+    'query',
+    'tsx',
+    'typescript',
+    'vim',
+    'vimdoc',
+    'yaml',
+  }
   require('nvim-treesitter').install(parsers)
 
   ---@param buf integer
